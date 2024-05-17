@@ -7,13 +7,14 @@
 #include <ft2build.h>
 #include FT_FREETYPE_H
 
+#define LINE_SPACING 1.1f
+
 static FT_Library s_Lib = NULL;
-static const char GLYPHS[95] = 
+static const char GLYPHS[94] = 
 			"!\"#$%&'()*+,-./0123456789:;<=>?@"
 			"ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`"
 			"abcdefghijklmnopqrstuvwxyz{|}~";
-
-#define GLYPH_CNT (sizeof(GLYPHS) - 1ul)
+#define GLYPH_CNT sizeof(GLYPHS)
 
 static struct 
 {
@@ -26,10 +27,9 @@ void dce_get_atlas_dims(FT_Face face, uint32_t *width, uint32_t *height, uint32_
 {
 	uint32_t curRowW = 0, curRowH = 0;
 	uint32_t totalW = 0, totalH = 0;
-
 	for (size_t i = 0; i < GLYPH_CNT; ++i)
 	{
-		if (FT_Load_Char(face, GLYPHS[i], FT_LOAD_RENDER))
+		if (FT_Load_Char(face, GLYPHS[i], FT_LOAD_RENDER | FT_LOAD_TARGET_(FT_RENDER_MODE_SDF)))
 		{
 			//RB_ERROR("Unable to load glyph %c", GLYPHS[i]);
 			continue;
@@ -72,8 +72,8 @@ uint8_t* dce_generate_atlas_tex(FT_Face face, uint32_t texW, uint32_t texH, uint
 	const double invH = 1.0 / texH;
 
 	// Store space size data or zero if no space is found.
-	s_LoadedFont.Metrics.SpaceSize = 
-		FT_Load_Char(face, ' ', FT_LOAD_RENDER) ? 0 : face->glyph->advance.x;
+	s_LoadedFont.Metrics.Space_Size = 
+		FT_Load_Char(face, ' ', FT_LOAD_RENDER) ? 0 : face->glyph->advance.x >> 6;
 
 	int loaded_glyph_cnt = 0;
 
@@ -82,7 +82,7 @@ uint8_t* dce_generate_atlas_tex(FT_Face face, uint32_t texW, uint32_t texH, uint
 		char ch = GLYPHS[i];
 
 		// load character glyph
-		if (FT_Load_Char(face, ch, FT_LOAD_RENDER) 
+		if (FT_Load_Char(face, ch, FT_LOAD_RENDER | FT_LOAD_TARGET_(FT_RENDER_MODE_SDF)) 
 			|| face->glyph->bitmap.width == 0 
 			|| face->glyph->bitmap.rows == 0)
 		{
@@ -111,11 +111,11 @@ uint8_t* dce_generate_atlas_tex(FT_Face face, uint32_t texW, uint32_t texH, uint
 		
 		s_LoadedFont.Chars[ch - '!'] = (CharMetrics)
 		{
-			.Advance       = face->glyph->advance.x,
+			.Advance       = face->glyph->advance.x >> 6,
 			.Bearing_X     = face->glyph->bitmap_left,
 			.Bearing_Y     = face->glyph->bitmap_top,
-			.Size_X        = face->glyph->bitmap_left,
-			.Size_Y        = face->glyph->bitmap_left,
+			.Size_X        = bmp->width,
+			.Size_Y        = bmp->rows,
 			.Bottom_Left_X = (double)offX * invW,
 			.Bottom_Left_Y = (double)(offY + bmp->rows) * invH,
 			.Top_Right_X   = (double)(offX + bmp->width) * invW,
@@ -132,7 +132,7 @@ uint8_t* dce_generate_atlas_tex(FT_Face face, uint32_t texW, uint32_t texH, uint
 	return pixels;
 }
 
-bool dce_load_font(const char *filepath, uint32_t pixel_size)
+bool dce_load_font(const char *filepath)
 {
 	if (!s_Lib)
 	{
@@ -146,16 +146,15 @@ bool dce_load_font(const char *filepath, uint32_t pixel_size)
 
 	FT_Face face;
 	FT_New_Face(s_Lib, filepath, 0, &face);
-	FT_Set_Pixel_Sizes(face, pixel_size, pixel_size);
+	FT_Set_Pixel_Sizes(face, 0, DCE_FONT_SDF_WIDTH);
 
 	uint32_t textureW = 0, textureH = 0;
 
-	s_LoadedFont.Metrics.Ascender = face->ascender;
-	s_LoadedFont.Metrics.Descender = face->descender;
-	s_LoadedFont.Metrics.Height = face->height;
+	s_LoadedFont.Metrics.Line_Height = (float)DCE_FONT_SDF_WIDTH * LINE_SPACING;
+	s_LoadedFont.Metrics.Descender = face->descender >> 6;
 
-	dce_get_atlas_dims(face, &textureW, &textureH, pixel_size << 4);
-	uint8_t* buffer = dce_generate_atlas_tex(face, textureW, textureH, pixel_size << 4);
+	dce_get_atlas_dims(face, &textureW, &textureH, DCE_FONT_SDF_WIDTH << 4);
+	uint8_t* buffer = dce_generate_atlas_tex(face, textureW, textureH, DCE_FONT_SDF_WIDTH << 4);
 	
 	if(!buffer)
 	{

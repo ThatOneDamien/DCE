@@ -1,11 +1,12 @@
 #include <stdbool.h>
 
+#define DCE_FONT_SDF_WIDTH 32u
+
 typedef struct 
 {
-	int16_t Ascender;
 	int16_t Descender;
-	int16_t Height;
-	int64_t SpaceSize;
+	float Line_Height;
+	int64_t Space_Size;
 } FontMetrics;
 
 // If Bottom_Left_X is -1.0f, this struct is invalid.
@@ -18,7 +19,7 @@ typedef struct
 	int32_t   Advance;                      // Offset to advance to next glyph
 } CharMetrics;
 
-bool dce_load_font(const char *filepath, uint32_t pixel_size);
+bool dce_load_font(const char *filepath);
 
 const CharMetrics* dce_get_char_metrics(char c);
 const FontMetrics* dce_get_font_metrics();

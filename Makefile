@@ -1,14 +1,26 @@
 PKGS=glfw3 freetype2
-CC=gcc
-CFLAGS=-Wall -Wextra -std=c11 -Idependencies/glad/include `pkg-config --cflags $(PKGS)`
-LIBS=`pkg-config --static --libs $(PKGS)` -lm
-SRCS=src/app.c src/window.c src/renderer.c src/font.c src/file-manager.c dependencies/glad/src/glad.c
+CC=clang
+CXX=clang++
+CXXFLAGS=-Wall -Wextra -stdlib=libc++ --std=c++17
+EXTRACXXFLAGS=-I dependencies/glad/include -I dependencies/tree-sitter/lib/include `pkg-config --cflags $(PKGS)`
+LIBS=`pkg-config --static --libs $(PKGS)`
+SRCS=src/App.cpp src/Editor.cpp src/FileManager.cpp src/Font.cpp src/Renderer.cpp src/Window.cpp bin/int/glad.o bin/int/tree-sitter.o
 
-release: dce
+release: bin/dce
 
-debug: 
-	CFLAGS += -DDEBUG
-debug: dce
+debug: CXXFLAGS += -DDEBUG -g
+debug: bin/dce
 
-dce: $(SRCS)
-	$(CC) $(CFLAGS) -o bin/dce $(SRCS) $(LIBS)
+clean:
+	rm -f bin/{*,.*}
+	rm -f bin/int/*
+
+bin/dce: $(SRCS)
+	$(CXX) $(CXXFLAGS) $(EXTRACXXFLAGS) -o bin/dce $(SRCS) $(LIBS)
+
+bin/int/glad.o:
+	$(CC) -I dependencies/glad/include -o bin/int/glad.o -c dependencies/glad/src/glad.c
+
+bin/int/tree-sitter.o:
+	$(CC) -I dependencies/tree-sitter/lib/include -I dependencies/tree-sitter/lib/src \
+					-o bin/int/tree-sitter.o -c dependencies/tree-sitter/lib/src/lib.c

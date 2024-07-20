@@ -1,3 +1,4 @@
 bin
 .vscode/
+.cache
 src/test.c

@@ -11,7 +11,7 @@
 #define DCE_ASSERT(x, msg, ...) { if(!(x)) { printf(msg, ##__VA_ARGS__); raise(SIGTRAP); } }
 #define DCE_ASSURE_OR_EXIT(x, msg, ...) { if(!(x)) { printf(msg, ##__VA_ARGS__); raise(SIGTRAP); exit(EXIT_FAILURE); } }
 #else
-#define DCE_ASSERT(x, msg, ...) x
+#define DCE_ASSERT(x, msg, ...) 
 #define DCE_ASSURE_OR_EXIT(x, msg, ...) { if(!(x)) { printf(msg, ##__VA_ARGS__); exit(EXIT_FAILURE); } }
 #endif
 

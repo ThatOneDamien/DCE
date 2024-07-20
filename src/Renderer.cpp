@@ -1,14 +1,14 @@
-#include "Font.h"
-#include "Renderer.h"
-#include "FileManager.h"
-
 #include <vector>
 
 #include <glad/glad.h>
+#include <GLFW/glfw3.h>
 
-// FORWARD DECLARATION
-typedef void (*GLFWglproc)(void);
-extern GLFWglproc glfwGetProcAddress(const char* procname);
+#include "Editor.h"
+#include "Renderer.h"
+#include "FileManager.h"
+#include "Font.h"
+#include "Window.h"
+
 
 #define MAX_QUAD_COUNT 1000ull
 #define MAX_VERTEX_COUNT (MAX_QUAD_COUNT * 4ull)
@@ -34,7 +34,6 @@ namespace dce
             bool LinkShader(GLuint);
         }
 
-        static GLuint rendererID = 0;
         static GLuint s_TextVertexArrayID = 0;
 
         static GLuint s_VertexBufferID = 0;
@@ -46,7 +45,7 @@ namespace dce
         static GLuint s_TextShaderID = 0;
         static GLuint s_BasicShaderID = 0;
 
-        static float s_CursorWidth;
+        static size_t s_LinesDrawn = 0;
 
         struct
         {
@@ -71,6 +70,10 @@ namespace dce
             glEnable(GL_BLEND);
             glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
             glDepthMask(GL_FALSE);
+
+            printf("OpenGL Version %s Initialized\n", glGetString(GL_VERSION));
+            printf("OpenGL Vendor %s\n", glGetString(GL_VENDOR));
+            printf("OpenGL Renderer %s\n", glGetString(GL_RENDERER));
 
             s_VertexInsert = s_VertexData;
 
@@ -107,9 +110,9 @@ namespace dce
 
 
             {
-                char* vert_src = dce_load_shader_from_file("assets/shaders/base.vert");
-                char* text_frag_src = dce_load_shader_from_file("assets/shaders/text_basic.frag");
-                char* solid_frag_src = dce_load_shader_from_file("assets/shaders/solid_basic.frag");
+                char* vert_src = ExtractShaderFromFile("assets/shaders/base.vert");
+                char* text_frag_src = ExtractShaderFromFile("assets/shaders/text_basic.frag");
+                char* solid_frag_src = ExtractShaderFromFile("assets/shaders/solid_basic.frag");
 
                 s_TextShaderID = glCreateProgram();
                 s_BasicShaderID = glCreateProgram();
@@ -117,9 +120,9 @@ namespace dce
                 GLuint text_frag_shader_id = glCreateShader(GL_FRAGMENT_SHADER);
                 GLuint solid_frag_shader_id = glCreateShader(GL_FRAGMENT_SHADER);
 
-                if(!dce_compile_shader(vert_shader_id, vert_src, GL_VERTEX_SHADER) ||
-                        !dce_compile_shader(text_frag_shader_id, text_frag_src, GL_FRAGMENT_SHADER) ||
-                        !dce_compile_shader(solid_frag_shader_id, solid_frag_src, GL_FRAGMENT_SHADER))
+                if(!CompileShader(vert_shader_id, vert_src, GL_VERTEX_SHADER) ||
+                        !CompileShader(text_frag_shader_id, text_frag_src, GL_FRAGMENT_SHADER) ||
+                        !CompileShader(solid_frag_shader_id, solid_frag_src, GL_FRAGMENT_SHADER))
                 {
                     glDeleteProgram(s_TextShaderID);
                     glDeleteProgram(s_BasicShaderID);
@@ -130,11 +133,15 @@ namespace dce
                 glAttachShader(s_BasicShaderID, vert_shader_id);
                 glAttachShader(s_BasicShaderID, solid_frag_shader_id);
 
-                bool linkStatus = dce_link_shader(s_TextShaderID) && dce_link_shader(s_BasicShaderID);
+                bool linkStatus = LinkShader(s_TextShaderID) && LinkShader(s_BasicShaderID);
 
                 glDeleteShader(vert_shader_id);
                 glDeleteShader(text_frag_shader_id);
                 glDeleteShader(solid_frag_shader_id);
+
+                free(vert_src);
+                free(text_frag_src);
+                free(solid_frag_src);
 
                 if(!linkStatus)
                     return false;
@@ -168,13 +175,11 @@ namespace dce
             glClearColor(r, g, b, 1.0f);
         }
 
-        void UpdateProjection(float zoom, float newWidth, float newHeight)
+        void UpdateProjection(float width, float height)
         {
-            glViewport(0, 0, (GLsizei)newWidth, (GLsizei)newHeight);
-            zoom *= 2.0f;
-            s_UniformBufferStruct.ScaleX = zoom / newWidth;
-            s_UniformBufferStruct.ScaleY = -zoom / newHeight;
-            s_CursorWidth = 4.0f / zoom;
+            glViewport(0, 0, (GLsizei)width, (GLsizei)height);
+            s_UniformBufferStruct.ScaleX = 2.0f / width;
+            s_UniformBufferStruct.ScaleY = -2.0f / height;
             glNamedBufferSubData(s_UniformBuffer, 0, sizeof(s_UniformBufferStruct), &s_UniformBufferStruct);
         }
 
@@ -217,8 +222,8 @@ namespace dce
 
             glTextureSubImage2D(rendererID, 0, 0, 0, width, height, GL_RED, GL_UNSIGNED_BYTE, temp.data());
 
-            glTextureParameteri(rendererID, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-            glTextureParameteri(rendererID, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glTextureParameteri(rendererID, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+            glTextureParameteri(rendererID, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 
             glTextureParameteri(rendererID, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
             glTextureParameteri(rendererID, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
@@ -230,113 +235,64 @@ namespace dce
             return rendererID;
         }
 
-        static bool dce_compile_shader(GLuint shader_id, const char* shader_src, GLenum type)
+        size_t GetLastLineCountDrawn()
         {
-            glShaderSource(shader_id, 1, &shader_src, 0);
-            glCompileShader(shader_id);
-
-            GLint compile_status = 0;
-            glGetShaderiv(shader_id, GL_COMPILE_STATUS, &compile_status);
-            if (!compile_status)
-            {
-                GLint length;
-                glGetShaderiv(shader_id, GL_INFO_LOG_LENGTH, &length);
-                GLchar message[1000];
-                glGetShaderInfoLog(shader_id, 1000, &length, message);
-
-                glDeleteShader(shader_id);
-
-                if(type == GL_VERTEX_SHADER)
-                    printf("Vertex shader failed to compile!: %s\n", message);
-                else if(type == GL_FRAGMENT_SHADER)
-                    printf("Fragment shader failed to compile!: %s\n", message);
-                else
-                    printf("Unknown shader type.\n");
-                return false;
-            }
-
-            return true;
+            return s_LinesDrawn;
         }
 
-        static bool dce_link_shader(GLuint program_id)
-        {
-            glLinkProgram(program_id);
 
-            GLint link_status = 0;
-            glGetProgramiv(program_id, GL_LINK_STATUS, &link_status);
-            if (!link_status)
-            {
-                GLint length;
-                glGetProgramiv(program_id, GL_INFO_LOG_LENGTH, &length);
-                GLchar message[1000];
-                glGetProgramInfoLog(program_id, 1000, &length, message);
-
-                glDeleteProgram(program_id);
-
-                printf("Program failed to link successfully: %s\n", message);
-            }
-            return link_status;
-        }
-
-        void dce_draw_quad(float x, float y,
-                float r, float g, float b, float a,
-                float blTexX, float blTexY,
-                float trTexX, float trTexY,
-                float width, float height)
+        void DrawQuad(float x, float y,
+                      float r, float g, float b, float a,
+                      float botLeftTexCoordX, float botLeftTexCoordY,
+                      float topRightTexCoordX, float topRightTexCoordY,
+                      float width, float height)
         {
             s_VertexInsert[0] = (TextVertex)
             {
-                .X = x,
-                .Y = y,
-                .R = r, .G = g, .B = b, .A = a,
-                .TexCoordX = blTexX,
-                .TexCoordY = blTexY
+                x, y,
+                r, g, b, a,
+                botLeftTexCoordX, botLeftTexCoordY
             };
             s_VertexInsert[1] = (TextVertex)
             {
-                .X = x + width,
-                    .Y = y,
-                    .R = r, .G = g, .B = b, .A = a,
-                    .TexCoordX = trTexX,
-                    .TexCoordY = blTexY
+                x + width, y,
+                r, g, b, a,
+                topRightTexCoordX, botLeftTexCoordY
             };
             s_VertexInsert[2] = (TextVertex)
             {
-                .X = x + width,
-                    .Y = y + height,
-                    .R = r, .G = g, .B = b, .A = a,
-                    .TexCoordX = trTexX,
-                    .TexCoordY = trTexY
+                x + width, y + height,
+                r, g, b, a,
+                topRightTexCoordX, topRightTexCoordY
             };
             s_VertexInsert[3] = (TextVertex)
             {
-                .X = x,
-                    .Y = y + height,
-                    .R = r, .G = g, .B = b, .A = a,
-                    .TexCoordX = blTexX,
-                    .TexCoordY = trTexY
+                x, y + height,
+                r, g, b, a,
+                botLeftTexCoordX, topRightTexCoordY
             };
             ++s_QuadCount;
             s_VertexInsert += 4;
         }
 
-        static void dce_draw_basic_text(const char* text, float* pen_X, float* pen_Y,
+        static void DrawBasicText(const char* text, float* pen_X, float* pen_Y,
                 float xNewlineBeg, float yIncr)
         {
-            const FontMetrics* fm = dce_get_font_metrics();
+            const Font* regularFont = Editor::GetRegularFont();
+            const FontMetrics& fm = regularFont->GetFontMetrics();
             size_t lineCharCnt = 0;
             for(; *text; ++text)
             {
                 char c = *text;
                 if(c == ' ')
                 {
-                    *pen_X += fm->Space_Size;
+                    *pen_X += fm.Space_Size;
                     ++lineCharCnt;
                 }
                 else if(c == '\t')
                 {
                     int size = 4 - (lineCharCnt & 3);
-                    pen_X += fm->Space_Size * size;
+                    pen_X += fm.Space_Size * size;
                     lineCharCnt += size;
                 }
                 else if(c == '\n')
@@ -347,46 +303,48 @@ namespace dce
                 }
                 else
                 {
-                    const CharMetrics* metrics = dce_get_char_metrics(c);
-                    float x = *pen_X + (float)metrics->Bearing_X;
-                    float y = *pen_Y + (float)metrics->Size_Y - (float)metrics->Bearing_Y;
-                    dce_draw_quad(x, y,
-                            1.0f, 1.0f, 1.0f, 1.0f,
-                            metrics->Bottom_Left_X, metrics->Bottom_Left_Y,
-                            metrics->Top_Right_X, metrics->Top_Right_Y,
-                            (float)metrics->Size_X, -(float)metrics->Size_Y);
+                    const CharMetrics& metrics = regularFont->GetCharMetrics(c);
+                    float x = *pen_X + (float)metrics.Bearing_X;
+                    float y = *pen_Y + (float)metrics.Size_Y - (float)metrics.Bearing_Y;
+                    DrawQuad(x, y,
+                             1.0f, 1.0f, 1.0f, 1.0f,
+                             metrics.Bottom_Left_X, metrics.Bottom_Left_Y,
+                             metrics.Top_Right_X, metrics.Top_Right_Y,
+                             (float)metrics.Size_X, -(float)metrics.Size_Y);
 
                     ++lineCharCnt;
-                    *pen_X += metrics->Advance;
+                    *pen_X += metrics.Advance;
                 }
             }
         }
 
-        static void dce_render_cursor(float x, float y)
+        static void RenderCursor(float x, float y)
         {
-            if(g_Editor.cursor_timer < 0)
-                g_Editor.cursor_timer = DCE_CURSOR_BLINK_THRESHOLD;
-            const FontMetrics* fm = dce_get_font_metrics();
-            y -= fm->Descender;
-            dce_draw_quad(x, y,
-                    1.0f, 1.0f, 1.0f, (g_Editor.cursor_timer < (DCE_CURSOR_BLINK_THRESHOLD >> 1) ? 0.0f : 1.0f),
+            int& cursorTimer = Editor::GetCursorTimer();
+            if(cursorTimer < 0)
+                cursorTimer = DCE_CURSOR_BLINK_THRESHOLD;
+            const Font* regularFont = Editor::GetRegularFont();
+            const FontMetrics& fm = regularFont->GetFontMetrics();
+            y -= fm.Descender;
+            DrawQuad(x, y,
+                    1.0f, 1.0f, 1.0f, (cursorTimer < (DCE_CURSOR_BLINK_THRESHOLD >> 1) ? 0.0f : 1.0f),
                     0.0f, 0.0f,
                     0.0f, 0.0f,
-                    s_CursorWidth, -1.0f * DCE_SDF_SIZE);
-            --g_Editor.cursor_timer;
+                    2.0f, -((float)Editor::GetFontSize() - fm.Descender));
+            --cursorTimer;
         }
 
-        static void dce_render_line_num(float x, float y, size_t lineNum)
+        static void RenderLineNum(float x, float y, size_t lineNum)
         {
-            const CharMetrics* numMetrics = dce_get_char_metrics('0');
+            const CharMetrics* numMetrics = &Editor::GetRegularFont()->GetCharMetrics('0');
             while(lineNum)
             {
                 if(s_QuadCount >= MAX_QUAD_COUNT)
-                    dce_renderer_draw_batched();
+                    DrawBatched();
                 size_t rem = lineNum % 10;
                 lineNum /= 10;
                 x -= numMetrics->Advance;
-                dce_draw_quad(x + (float)numMetrics[rem].Bearing_X, y + (float)numMetrics[rem].Size_Y - (float)numMetrics[rem].Bearing_Y,
+                DrawQuad(x + (float)numMetrics[rem].Bearing_X, y + (float)numMetrics[rem].Size_Y - (float)numMetrics[rem].Bearing_Y,
                         0.863f, 0.91f, 0.655f, 1.0f,
                         numMetrics[rem].Bottom_Left_X, numMetrics[rem].Bottom_Left_Y,
                         numMetrics[rem].Top_Right_X, numMetrics[rem].Top_Right_Y,
@@ -394,192 +352,258 @@ namespace dce
             }
         }
 
-        void dce_render_editor(size_t linesToDraw)
+        void RenderEditor()
         {
             // TODO: Make this customizable along with text color.
+            const Font* regularFont = Editor::GetRegularFont();
             float curs_X, curs_Y;
-            const float START_X = (float)dce_get_char_metrics('0')->Advance;
+            const float START_X = (float)regularFont->GetCharMetrics('0').Advance;
             {
                 glUseProgram(s_BasicShaderID);
-                dce_draw_quad(0.0f, 0.0f,
+                DrawQuad(0.0f, 0.0f,
                         0.2f, 0.2f, 0.2f, 1.0f,
                         0.0f, 0.0f, 0.0f, 0.0f,
                         START_X * 4.5f, 4000.0f);
-                dce_renderer_draw_batched();
+                DrawBatched();
             }
             // RENDER ACTUAL TEXT AND EVENTUALLY LINE NUMBERS
             {
                 glUseProgram(s_TextShaderID);
-                const FontMetrics* fm = dce_get_font_metrics();
-                float pen_X = START_X * 5.0f, pen_Y = DCE_LINE_HEIGHT;
+                const FontMetrics& fm = regularFont->GetFontMetrics();
+                float pen_X = START_X * 5.0f, pen_Y = Editor::GetLineHeight();
                 curs_X = pen_X;
                 curs_Y = pen_Y;
 
-                size_t start = g_Editor.line_data[g_Editor.camera_starting_line - 1];
+                const EditorStorage& storage = Editor::GetStorage();
+                const GapBuffer<char>& charData = storage.GetCharData();
+                const GapBuffer<size_t>& lineData = storage.GetLineData();
+                const EditorWindow* win = Editor::GetWindow();
 
-                size_t end = g_Editor.line_data[g_Editor.line_data_capacity - g_Editor.line_count + linesToDraw + g_Editor.camera_starting_line - 1];
-                end += g_Editor.capacity - g_Editor.size;
+                size_t cameraStart = storage.GetCameraStartLine() - 1;
+                size_t start = lineData[cameraStart];
 
                 size_t lineCharCnt = 0;
-                size_t lineNum = g_Editor.camera_starting_line;
-                dce_render_line_num(START_X * 4.0f, pen_Y, lineNum);
-                for(size_t i = start; i < end; ++i)
+                size_t lineNum = storage.GetCameraStartLine();
+                RenderLineNum(START_X * 4.0f, pen_Y, lineNum);
+                for(size_t i = start; i < charData.Size() && 
+                    pen_Y < (float)win->GetHeight(); ++i)
                 {
-                    if(i == g_Editor.cursor_pos)
-                    {
-                        curs_X = pen_X;
-                        curs_Y = pen_Y;
-                        i += g_Editor.capacity - g_Editor.size - 1;
-                        continue;
-                    }
 
                     if(s_QuadCount >= MAX_QUAD_COUNT)
-                        dce_renderer_draw_batched();
+                        DrawBatched();
 
-                    char c = g_Editor.data[i];
+                    char c = charData[i];
 
                     if(c == ' ')
                     {
                         ++lineCharCnt;
-                        pen_X += fm->Space_Size;
+                        pen_X += fm.Space_Size;
                     }
                     else if(c == '\t')
                     {
                         int size = 4 - (lineCharCnt & 3);
-                        pen_X += fm->Space_Size * size;
+                        pen_X += fm.Space_Size * size;
                         lineCharCnt += size;
                     }
                     else if(c == '\n')
                     {
                         pen_X = START_X * 5.0f;
-                        pen_Y += DCE_LINE_HEIGHT;
+                        pen_Y += Editor::GetLineHeight();
                         lineCharCnt = 0;
                         ++lineNum;
-                        dce_render_line_num(START_X * 4.0f, pen_Y, lineNum);
+                        RenderLineNum(START_X * 4.0f, pen_Y, lineNum);
                     }
                     else
                     {
-                        const CharMetrics* metrics = dce_get_char_metrics(c);
-                        float x = pen_X + (float)metrics->Bearing_X;
-                        float y = pen_Y + (float)metrics->Size_Y - (float)metrics->Bearing_Y;
-                        dce_draw_quad(x, y,
+                        const CharMetrics& metrics = regularFont->GetCharMetrics(c);
+                        float x = pen_X + (float)metrics.Bearing_X;
+                        float y = pen_Y + (float)metrics.Size_Y - (float)metrics.Bearing_Y;
+                        DrawQuad(x, y,
                                 1.0f, 1.0f, 1.0f, 1.0f,
-                                metrics->Bottom_Left_X, metrics->Bottom_Left_Y,
-                                metrics->Top_Right_X, metrics->Top_Right_Y,
-                                (float)metrics->Size_X, -(float)metrics->Size_Y);
+                                metrics.Bottom_Left_X, metrics.Bottom_Left_Y,
+                                metrics.Top_Right_X, metrics.Top_Right_Y,
+                                (float)metrics.Size_X, -(float)metrics.Size_Y);
 
-                        pen_X += metrics->Advance;
+                        pen_X += metrics.Advance;
                         ++lineCharCnt;
                     }
-                    if((pen_X + DCE_SDF_SIZE) * s_UniformBufferStruct.ScaleX > 2.0f)
+                    if((pen_X + Editor::GetLineHeight()) * s_UniformBufferStruct.ScaleX > 2.0f)
                     {
                         pen_X = START_X * 5.0f;
-                        pen_Y += DCE_LINE_HEIGHT;
+                        pen_Y += Editor::GetLineHeight();
+                    }
+
+                    if(i+1 == charData.GapPos())
+                    {
+                        curs_X = pen_X;
+                        curs_Y = pen_Y;
                     }
                 }
-                dce_renderer_draw_batched();
+                const CharMetrics& tilda = regularFont->GetCharMetrics('~');
+                pen_Y += Editor::GetLineHeight();
+                while(pen_Y < (float)win->GetHeight())
+                {
+                    DrawQuad(START_X * 4.0f - (float)tilda.Advance + (float)tilda.Bearing_X, 
+                            pen_Y + (float)tilda.Size_Y - (float)tilda.Bearing_Y,
+                            0.863f, 0.91f, 0.655f, 1.0f,
+                            tilda.Bottom_Left_X, tilda.Bottom_Left_Y,
+                            tilda.Top_Right_X, tilda.Top_Right_Y,
+                            (float)tilda.Size_X, -(float)tilda.Size_Y);
+                    pen_Y += Editor::GetLineHeight();
+                    ++lineNum;
+                }
+                s_LinesDrawn = lineNum + 1 - storage.GetCameraStartLine();
+                DrawBatched();
             }
             // RENDER CURSOR
             {
                 glUseProgram(s_BasicShaderID);
-                dce_render_cursor(curs_X, curs_Y);
-                dce_renderer_draw_batched();
+                RenderCursor(curs_X, curs_Y);
+                DrawBatched();
             }
         }
 
-        void dce_render_file_manager()
+        void RenderFileManager(size_t selected)
         {
             float curs_X = 0.0f, curs_Y = 0.0f;
             float curs_Width = 0.0f;
             {
                 glUseProgram(s_TextShaderID);
-                float pen_X = 0.0f, pen_Y = DCE_LINE_HEIGHT;
-                dce_draw_basic_text("ALL FILES\n\n", &pen_X, &pen_Y, 0.0f, DCE_LINE_HEIGHT);
+                float pen_X = 0.0f, pen_Y = Editor::GetLineHeight();
+                DrawBasicText("ALL FILES\n\n", &pen_X, &pen_Y, 0.0f, Editor::GetLineHeight());
                 curs_X = pen_X;
                 curs_Y = pen_Y;
-                dce_draw_basic_text("..", &pen_X, &pen_Y, 0.0f, DCE_LINE_HEIGHT);
-                curs_Width = pen_X - curs_X;
-                const char** allFiles = dce_get_dir_contents();
-                size_t cnt = dce_get_file_count();
-                for(size_t i = 0; i < cnt; ++i)
+                const DirContents& allFiles = FileMan::GetDirContents();
+                for(size_t i = 0; i < allFiles.size(); ++i)
                 {
                     pen_X = 0.0f;
-                    pen_Y += DCE_LINE_HEIGHT;
-                    if(i + 1 == g_SelectedFile)
+                    pen_Y += Editor::GetLineHeight();
+                    if(i == selected)
                     {
                         curs_X = pen_X;
                         curs_Y = pen_Y;
                     }
-                    dce_draw_basic_text(allFiles[i], &pen_X, &pen_Y, 0.0f, 0.0f);
-                    if(i + 1 == g_SelectedFile)
+                    DrawBasicText(allFiles[i].Name.c_str(), &pen_X, &pen_Y, 0.0f, 0.0f);
+                    if(i == selected)
                         curs_Width = pen_X - curs_X;
                 }
-                dce_renderer_draw_batched();
+                DrawBatched();
             }
             {
                 glUseProgram(s_BasicShaderID);
-                const FontMetrics* fm = dce_get_font_metrics();
-                dce_draw_quad(curs_X, curs_Y - fm->Descender,
+                const FontMetrics& fm = Editor::GetRegularFont()->GetFontMetrics();
+                DrawQuad(curs_X, curs_Y - fm.Descender,
                         1.0f, 1.0f, 1.0f, 0.4f,
                         0.0f, 0.0f, 0.0f, 0.0f,
-                        curs_Width, -DCE_LINE_HEIGHT);
-                dce_renderer_draw_batched();
+                        curs_Width, -Editor::GetLineHeight());
+                DrawBatched();
             }
         }
 
-        static void dce_gl_debug_func(GLenum source, GLenum type, GLuint id,
-                GLenum severity, GLsizei length,
-                const GLchar *message, const void *userParam)
+        namespace 
         {
-            // To stop unused variables warning
-            (void) source; (void) type; (void) id; (void) length; (void) userParam;
-
-            switch (severity)
+            bool CompileShader(GLuint shader_id, const char* shader_src, GLenum type)
             {
-                case GL_DEBUG_SEVERITY_LOW:
-                    printf("OpenGL Warning: %s\n", message);
-                    break;
-                case GL_DEBUG_SEVERITY_MEDIUM:
-                    printf("OpenGL Error: %s\n", message);
-                    break;
-                case GL_DEBUG_SEVERITY_HIGH:
-                    printf("OpenGL Critical Error: %s\n", message);
-                    break;
+                glShaderSource(shader_id, 1, &shader_src, 0);
+                glCompileShader(shader_id);
+
+                GLint compile_status = 0;
+                glGetShaderiv(shader_id, GL_COMPILE_STATUS, &compile_status);
+                if (!compile_status)
+                {
+                    GLint length;
+                    glGetShaderiv(shader_id, GL_INFO_LOG_LENGTH, &length);
+                    GLchar message[1000];
+                    glGetShaderInfoLog(shader_id, 1000, &length, message);
+
+                    glDeleteShader(shader_id);
+
+                    if(type == GL_VERTEX_SHADER)
+                        printf("Vertex shader failed to compile!: %s\n", message);
+                    else if(type == GL_FRAGMENT_SHADER)
+                        printf("Fragment shader failed to compile!: %s\n", message);
+                    else
+                        printf("Unknown shader type.\n");
+                    return false;
+                }
+
+                return true;
             }
-        }
 
-        static char* dce_load_shader_from_file(const char* filepath)
-        {
-            FILE* fp = fopen(filepath, "r");
-            if(!fp)
+            static bool LinkShader(GLuint program_id)
             {
-                printf("Unable to open file: %s\n", filepath);
-                return NULL;
+                glLinkProgram(program_id);
+
+                GLint link_status = 0;
+                glGetProgramiv(program_id, GL_LINK_STATUS, &link_status);
+                if (!link_status)
+                {
+                    GLint length;
+                    glGetProgramiv(program_id, GL_INFO_LOG_LENGTH, &length);
+                    GLchar message[1000];
+                    glGetProgramInfoLog(program_id, 1000, &length, message);
+
+                    glDeleteProgram(program_id);
+
+                    printf("Program failed to link successfully: %s\n", message);
+                }
+                return link_status;
             }
 
-            fseek(fp, 0, SEEK_END);
-            long size = ftell(fp);
-
-            if(size <= 0)
+            static void DebugCallback(GLenum source, GLenum type, GLuint id,
+                    GLenum severity, GLsizei length,
+                    const GLchar *message, const void *userParam)
             {
+                // To stop unused variables warning
+                (void) source; (void) type; (void) id; (void) length; (void) userParam;
+
+                switch (severity)
+                {
+                    case GL_DEBUG_SEVERITY_LOW:
+                        printf("OpenGL Warning: %s\n", message);
+                        break;
+                    case GL_DEBUG_SEVERITY_MEDIUM:
+                        printf("OpenGL Error: %s\n", message);
+                        break;
+                    case GL_DEBUG_SEVERITY_HIGH:
+                        printf("OpenGL Critical Error: %s\n", message);
+                        break;
+                }
+            }
+
+            char* ExtractShaderFromFile(const char* filepath)
+            {
+                FILE* fp = fopen(filepath, "r");
+                if(!fp)
+                {
+                    printf("Unable to open file: %s\n", filepath);
+                    return nullptr;
+                }
+
+                fseek(fp, 0, SEEK_END);
+                long size = ftell(fp);
+
+                if(size <= 0)
+                {
+                    fclose(fp);
+                    printf("Error reading file(maybe it was empty?): %s\n", filepath);
+                    return nullptr;
+                }
+
+                fseek(fp, 0, SEEK_SET);
+                char* source = (char*)malloc(size + 1);
+
+                if(source)
+                {
+                    source[size] = '\0';
+                    fread(source, 1, size, fp);
+                }
+                else
+                    printf("Error reading file(maybe it was too large?): %s\n", filepath);
+
                 fclose(fp);
-                printf("Error reading file(maybe it was empty?): %s\n", filepath);
-                return NULL;
+                return source;
             }
-
-            fseek(fp, 0, SEEK_SET);
-            char* source = malloc(size + 1);
-
-            if(source)
-            {
-                source[size] = '\0';
-                fread(source, 1, size, fp);
-            }
-            else
-                printf("Error reading file(maybe it was too large?): %s\n", filepath);
-
-            fclose(fp);
-            return source;
         }
     }
 }

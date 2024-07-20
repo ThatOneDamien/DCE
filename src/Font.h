@@ -1,6 +1,9 @@
-#include "Core.h"
+#ifndef _DCE_FONT_H
+#define _DCE_FONT_H
 
 #include <string>
+
+#include "Core.h"
 
 namespace dce
 {
@@ -25,7 +28,7 @@ namespace dce
     {
     public:
         Font(const std::string& filepath, uint32_t fontSize);
-        ~Font();
+        ~Font() = default;
 
         const CharMetrics& GetCharMetrics(char c) const;
         const FontMetrics& GetFontMetrics() const { return m_FontMetrics; }
@@ -42,3 +45,4 @@ namespace dce
         uint32_t m_AtlasRendererID;
     };
 }
+#endif // !_DCE_FONT_H

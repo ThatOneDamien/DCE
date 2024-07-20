@@ -1,8 +1,10 @@
-#include "Font.h"
-#include "Renderer.h"
-
 #include <ft2build.h>
 #include FT_FREETYPE_H
+
+#include "Font.h"
+#include "Core.h"
+#include "Renderer.h"
+
 
 namespace dce
 {
@@ -10,18 +12,21 @@ namespace dce
 
     Font::Font(const std::string& filepath, uint32_t fontSize)
     {
+        int error_code; (void)error_code;
         if (!s_Lib)
         {
-            int error_code = FT_Init_FreeType(&s_Lib);
-            DCE_ASSERT(error_code == 0, "FreeType Error (Code %d): Unable to initialize FreeType library.\n", error_code);
+            error_code = FT_Init_FreeType(&s_Lib);
+            DCE_ASSURE_OR_EXIT(error_code == 0, "FreeType Error (Code %d): Unable to initialize FreeType library.\n", error_code);
         }
 
         FT_Face face;
-        DCE_ASSERT(!FT_New_Face(s_Lib, filepath.c_str(), 0, &face), 
+        error_code = FT_New_Face(s_Lib, filepath.c_str(), 0, &face);
+        DCE_ASSERT(error_code == 0, 
                    "FreeType Error: Unable to load font at path \'%s\'.\n", 
                    filepath.c_str());
-         
-        DCE_ASSERT(!FT_Set_Pixel_Sizes(face, 0, fontSize), "FreeType Error: Unable to set font size.\n");
+        
+        error_code = FT_Set_Pixel_Sizes(face, 0, fontSize);
+        DCE_ASSERT(error_code == 0, "FreeType Error: Unable to set font size.\n");
 
         m_AtlasWidth = 0;
         m_AtlasHeight = 0;
@@ -121,5 +126,10 @@ namespace dce
         printf("Loaded %d out of %ld glyphs for font.\n", loaded_glyph_cnt, GLYPH_CNT);
 
         FT_Done_Face(face);
+    }
+
+    const CharMetrics& Font::GetCharMetrics(char c) const
+    {
+        return (c >= '!' && c <= '~') ? m_CharMetrics[c - '!'] : m_CharMetrics['?'];
     }
 }

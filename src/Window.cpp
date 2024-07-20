@@ -4,6 +4,7 @@
 
 #include "Window.h"
 #include "Core.h"
+#include "Editor.h"
 #include "Renderer.h"
 #include "FileManager.h"
 
@@ -13,25 +14,19 @@
 namespace dce
 {
 
-    // FOR CONVERTING KEYS WHEN SHIFT IS HELD
-    // static const char SHIFT_KEY_CONVERSION[65] =
-    //     " \0\0\0\0\0\0"
-    //     "\"\0\0\0\0<_>?"
-    //     ")!@#$%^&*(\0:\0+\0\0\0"
-    //     "abcdefghijklmnopqrstuvwxyz"
-    //     "{|}\0\0~";
 
     namespace
     {
         void WindowErrCallback(int, const char*);
     }
 
-
     // INITIALIZE THE WINDOW
     EditorWindow::EditorWindow(const char* title, int width, int height)
     {
-        glfwSetErrorCallback(WindowErrCallback);
+        m_Width = width;
+        m_Height = height;
         DCE_ASSURE_OR_EXIT(glfwInit() == GLFW_TRUE, "An error occurred during GLFW initialization.\n");
+        glfwSetErrorCallback(WindowErrCallback);
         
         glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
         glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 6);
@@ -41,13 +36,37 @@ namespace dce
 
         DCE_ASSURE_OR_EXIT(m_Window, "An error occurred when creating GLFW window.\n");
 
-        // glfwSetKeyCallback(m_Window, dce_window_key_callback);
-        // glfwSetWindowCloseCallback(m_Window, (GLFWwindowclosefun)dce_close_app);
-        // glfwSetWindowSizeCallback(m_Window, (GLFWwindowsizefun)dce_window_resize);
-        // glfwSetScrollCallback(m_Window, dce_scroll_callback);
-
         glfwMakeContextCurrent(m_Window);
         glfwSwapInterval(1);
+        glfwSetInputMode(m_Window, GLFW_LOCK_KEY_MODS, GLFW_TRUE);
+        glfwSetWindowCloseCallback(m_Window, 
+                [](GLFWwindow* window)
+                {
+                    (void)window;
+                    Editor::Close();
+                });
+        glfwSetWindowSizeCallback(m_Window, 
+                [](GLFWwindow* window, int width, int height)
+                {
+                    (void)window;
+                    Editor::OnResize((uint32_t)width, (uint32_t)height);
+                });
+        
+
+        glfwSetScrollCallback(m_Window, 
+                [](GLFWwindow* window, double xOffset, double yOffset)
+                {
+                    (void)window; (void)xOffset; (void)yOffset;
+                    // Do stuff later.
+                });
+        glfwSetKeyCallback(m_Window, 
+                [](GLFWwindow* window, int key, int scancode, int action, int mods)
+                {
+                    (void)window; (void)scancode;
+                    if(action != GLFW_RELEASE)
+                        Editor::OnKeyPress((KeyCode)key, mods, action == GLFW_REPEAT);
+                });
+
     }
 
 
@@ -72,13 +91,6 @@ namespace dce
         glfwSwapBuffers(m_Window);
         glfwPollEvents();
     }
-
-    // GET THE CURRENT SIZE (IN PIXELS) OF THE WINDOW.
-    void EditorWindow::GetWindowSize(int* o_Width, int* o_Height) const
-    {
-        glfwGetFramebufferSize(m_Window, o_Width, o_Height);
-    }
-
 
     namespace
     {
